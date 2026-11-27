@@ -1,0 +1,83 @@
+name: checks
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up validation tools
+        # Share Python, uv, and checksum-verified actionlint with release preparation.
+        uses: ./.github/actions/setup-validation-tools
+
+      - name: GitHub workflow validation
+        # Lint this repository's workflows with the shared, verified actionlint installation.
+        run: actionlint -color
+
+      - name: Shared, host, and release tooling tests
+        # Local fixtures and a simulated GitHub API; no inference or release credentials.
+        run: uv run --with pytest --with-requirements tools/requirements.txt python -m pytest tests
+
+      - name: Effective OpenCode permission tests
+        # Resolve agent rules with the CLI version from the image recipe; no inference.
+        # Keep CLI checks separate from staging unit tests already run above.
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^ARG OPENCODE_VERSION=//p' image/Containerfile)"
+          test -n "$version"
+          npm install --global --prefix "$RUNNER_TEMP/opencode" --no-audit --no-fund \
+            --allow-scripts=@opencode/cli "@opencode/cli@$version"
+          cli="$RUNNER_TEMP/opencode/bin/opencode"
+          test "$("$cli" --version)" = "opencode v$version"
+          REVIEW_OPENCODE_BIN="$cli" \
+            uv run --with pytest --with-requirements tools/requirements.txt \
+            python -m pytest -q tests/host/test_opencode_permissions.py
+
+      - name: Credential proxy Docker integration tests
+        # Local deterministic upstream only; no real inference or credentials.
+        env:
+          REVIEW_CONTAINER_TEST_ENGINE: docker
+        run: uv run --with pytest --with-requirements tools/requirements.txt python -m pytest -q tests/host/test_proxy_integration.py
+
+      - name: Review runtime tests
+        run: node --test tests/runtime/test-run-review.mjs
+
+      - name: Shell syntax
+        run: git ls-files '*.sh' | xargs -r -n1 bash -n
+
+      - name: CI YAML and embedded shell syntax
+        run: |
+          uv run --with-requirements tools/requirements.txt python - <<'PY'
+          import subprocess
+          from pathlib import Path
+          import yaml
+
+          for path in Path('.cscs/workflows').glob('*.yaml'):
+              data = yaml.safe_load(path.read_text())
+              for job in data.values():
+                  if not isinstance(job, dict):
+                      continue
+                  for key in ('before_script', 'script', 'after_script'):
+                      for script in job.get(key) or []:
+                          if isinstance(script, str):
+                              subprocess.run(['bash', '-n'], input=script, text=True, check=True)
+
+          # Include local composite actions as well as workflows.
+          for path in Path('.github').rglob('*.yml'):
+              data = yaml.safe_load(path.read_text())
+              steps = list(data.get('runs', {}).get('steps', []))
+              for job in data.get('jobs', {}).values():
+                  steps.extend(job.get('steps', []))
+              for step in steps:
+                  if 'run' in step:
+                      subprocess.run(['bash', '-n'], input=step['run'], text=True, check=True)
+          PY

@@ -1,0 +1,10 @@
+# actionlint 1.7.12 predates these GitHub.com job context properties.
+# https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#job-context
+# Remove these exceptions when the pinned linter's job schema includes both fields.
+paths:
+  .github/workflows/review.yml:
+    ignore:
+      - 'property "workflow_(repository|sha)" is not defined in object type'
+  .github/workflows/review-worker.yml:
+    ignore:
+      - 'property "workflow_(repository|sha)" is not defined in object type'

@@ -1,0 +1,44 @@
+name: Set up validation tools
+description: Set up Python and uv, with optional checksum-verified actionlint.
+
+inputs:
+  install-actionlint:
+    description: Install actionlint when the job validates workflows.
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      # Keep the Python version for checks and both release workflows in one place.
+      id: python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      with:
+        python-version: '3.12'
+
+    - name: Set up uv
+      # Workflows use uv to supply their Python dependencies without a project environment.
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+    - name: Expose the Python interpreter
+      # uv must use setup-python's interpreter even when actionlint is not needed.
+      shell: bash
+      env:
+        PYTHON_PATH: ${{ steps.python.outputs.python-path }}
+      run: printf 'UV_PYTHON=%s\n' "$PYTHON_PATH" >> "$GITHUB_ENV"
+
+    - name: Install actionlint
+      # Verify the pinned Linux AMD64 archive before extracting its executable.
+      # These tools are for GitHub-hosted validation jobs, not consumer review jobs.
+      if: inputs.install-actionlint == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        tool_dir="$RUNNER_TEMP/cscs-review-validation-tools"
+        mkdir -p "$tool_dir"
+        archive="$tool_dir/actionlint.tar.gz"
+        curl -fsSL https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$archive"
+        printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$archive" | sha256sum --check
+        tar -xzf "$archive" -C "$tool_dir" actionlint
+        # Later workflow-validation steps can invoke actionlint directly.
+        printf '%s\n' "$tool_dir" >> "$GITHUB_PATH"

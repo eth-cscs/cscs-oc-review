@@ -1,0 +1,83 @@
+name: CSCS review
+
+on:
+  workflow_call:
+    inputs:
+      allow-web:
+        description: Allow web search and fetch tools to send queries outside CSCS
+        default: false
+        type: boolean
+      review-instructions-path:
+        description: Default-branch instruction file; empty discovers optional .github/cscs-review.md
+        default: ''
+        type: string
+    secrets:
+      CSCS_INFERENCE_KEY:
+        description: CSCS inference API key; passed only to the inference step
+        required: true
+
+# Jobs reduce this ceiling; source inspection never receives a write-enabled token.
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  authorize:
+    # This event and token belong to the consumer, even though the workflow is shared.
+    # Only Conversation commands from a human can allocate an authorization runner.
+    if: >-
+      github.repository_owner == 'eth-cscs' &&
+      github.event_name == 'issue_comment' &&
+      github.event.action == 'created' &&
+      github.event.issue.pull_request &&
+      github.event.comment.user.type == 'User' &&
+      github.event.sender.type == 'User' &&
+      github.actor == github.event.comment.user.login &&
+      startsWith(github.event.comment.body, '/cscs-review')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      authorized: ${{ steps.access.outputs.authorized }}
+    steps:
+      # The job context identifies this reusable workflow, not the consumer's workflow.
+      - name: Checkout trusted authorization code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: reviewer-source
+          persist-credentials: false
+
+      # The same parser is used here and again before preparing PR context.
+      # Missing collaborators are rejected; other API failures stop authorization.
+      - name: Check current repository write access
+        id: access
+        # Import helpers only from the pinned trusted checkout, never the PR source.
+        working-directory: reviewer-source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m host.context authorize \
+            --event-name "$GITHUB_EVENT_NAME" \
+            --event-path "$GITHUB_EVENT_PATH" \
+            --repository "$GITHUB_REPOSITORY" \
+            --github-output "$GITHUB_OUTPUT"
+
+  review:
+    needs: authorize
+    if: needs.authorize.outputs.authorized == 'true'
+    # Put cancellation after authorization so an unauthorized comment cannot stop a review.
+    # The nested worker must not reuse this group or it would cancel its own caller.
+    concurrency:
+      group: opencode-review-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: true
+    # A relative reference keeps this worker at the entry workflow's release commit.
+    uses: ./.github/workflows/review-worker.yml
+    with:
+      allow-web: ${{ inputs.allow-web }}
+      review-instructions-path: ${{ inputs.review-instructions-path }}
+    secrets:
+      CSCS_INFERENCE_KEY: ${{ secrets.CSCS_INFERENCE_KEY }}

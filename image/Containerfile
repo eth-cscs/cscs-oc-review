@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1
+ARG BASE_IMAGE=node:24-bookworm-slim
+FROM ${BASE_IMAGE}
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates git ripgrep; \
+    rm -rf /var/lib/apt/lists/*
+
+ARG OPENCODE_VERSION=2.2.0
+ENV PATH="/opt/reviewer/bin:${PATH}"
+RUN set -eux; \
+    npm install --global --prefix /opt/reviewer --allow-scripts=@opencode/cli "@opencode/cli@${OPENCODE_VERSION}"; \
+    test "$(opencode --version)" = "opencode v${OPENCODE_VERSION}"; \
+    npm cache clean --force
+
+# Source checkout modes must not determine whether UID 1000 can read runtime assets.
+COPY --chmod=0444 image/grumpy-reviewer.md /opt/reviewer/grumpy-reviewer.md
+COPY --chmod=0555 image/entrypoint.sh /opt/reviewer/entrypoint.sh
+COPY --chmod=0444 image/run-review.mjs /opt/reviewer/run-review.mjs
+RUN set -eux; \
+    mkdir -p /input/pr-source /instructions /work /opt/reviewer/config/opencode; \
+    touch /input/context.md /instructions/AGENTS.md
+
+LABEL org.opencontainers.image.source="https://github.com/eth-cscs/cscs-oc-review" \
+      org.opencontainers.image.title="Isolated OpenCode PR reviewer"
+
+USER 1000:1000
+WORKDIR /work
+ENTRYPOINT ["/opt/reviewer/entrypoint.sh"]

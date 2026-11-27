@@ -1,0 +1,10 @@
+# Exclude transient files from the repository-root build context.
+**/.git
+**/__pycache__
+**/.pytest_cache
+**/.venv
+**/*.pyc
+**/*.pyo
+**/*.swp
+**/*.swo
+**/*~

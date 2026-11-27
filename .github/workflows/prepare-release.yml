@@ -1,0 +1,68 @@
+name: Prepare release
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    # Forks and non-default refs must not receive release-writing credentials.
+    if: >-
+      github.repository == 'eth-cscs/cscs-oc-review' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout exact release source
+        # Read VERSION and generate callers from the dispatch commit, even if the branch advances.
+        # Do not leave the checkout token in the repository's Git configuration.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up validation tools
+        # Share Python, uv, and checksum-verified actionlint with checks.yml.
+        uses: ./.github/actions/setup-validation-tools
+
+      - name: Check version and existing CI, then generate both callers
+        # Reject reused versions and require successful upstream push CI for this exact SHA.
+        # Generate web-disabled and web-enabled callers with the same immutable source pin.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          uv run --with-requirements tools/requirements.txt python -m tools.release prepare \
+            --repository "$GITHUB_REPOSITORY" \
+            --revision "$GITHUB_SHA" \
+            --ref "$GITHUB_REF" \
+            --output "$RUNNER_TEMP/release"
+
+      - name: Validate the generated callers
+        # Lint both generated caller workflows before uploading them as release assets.
+        # Source tests already passed in checks.yml for this exact commit and are not repeated here.
+        run: |
+          actionlint "$RUNNER_TEMP/release/cscs-review.yml" "$RUNNER_TEMP/release/cscs-review-web.yml"
+
+      - name: Create the draft release and upload callers
+        # Recheck the version, reserve its tag at the captured SHA, and create a draft.
+        # Upload the validated files unchanged; publication remains a maintainer action.
+        # Failures leave the tag, draft, or partial uploads for manual inspection.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          url="$(uv run --with-requirements tools/requirements.txt python -m tools.release create --output "$RUNNER_TEMP/release")"
+          {
+            printf '## Draft release\n\n[Review the draft](%s)\n\n' "$url"
+            printf 'Both validated callers are attached as release assets. Review the assets and change summary, then publish and mark the release as latest.\n'
+            printf 'No release was published and no inference request was made by this workflow.\n'
+          } >> "$GITHUB_STEP_SUMMARY"

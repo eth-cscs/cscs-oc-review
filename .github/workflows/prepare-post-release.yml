@@ -1,0 +1,62 @@
+name: Prepare post-release
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+concurrency:
+  # Serialize maintenance preparation; never cancel a run that may have created a branch.
+  group: prepare-post-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    # Never expose the App credentials to forks, drafts, or prereleases.
+    if: >-
+      github.repository == 'eth-cscs/cscs-oc-review' &&
+      !github.event.release.draft && !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted default-branch tooling
+        # Base the maintenance PR on current development, not the released source tree.
+        # The helper resolves the event's release tag independently for the caller pin.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Set up release tooling
+        # Reuse Python and uv setup without installing the unused workflow linter.
+        uses: ./.github/actions/setup-validation-tools
+        with:
+          install-actionlint: 'false'
+
+      - name: Create a repository-scoped App token
+        # Restrict the installation token to this repository and revoke it after the job.
+        id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.POST_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.POST_RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-workflows: write
+          permission-pull-requests: write
+
+      - name: Prepare the maintenance pull request
+        # The installation token is used only by this helper, never by the review caller.
+        # PR history makes reruns safe after merge and automatic branch deletion.
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RELEASE_ID: ${{ github.event.release.id }}
+        run: |
+          set -euo pipefail
+          uv run --with-requirements tools/requirements.txt python -m tools.post_release \
+            --repository "$GITHUB_REPOSITORY" \
+            --release-id "$RELEASE_ID" | tee -a "$GITHUB_STEP_SUMMARY"
