@@ -43,7 +43,7 @@ jobs:
       # review.yml authorizes the request before this job adds the receipt reaction.
       - name: Acknowledge receipt of review request
         id: reaction
-        uses: &github_script_action actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: &github_script_action actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v8
         with:
           github-token: ${{ github.token }}
           script: |
@@ -204,7 +204,7 @@ jobs:
 
       # Upload only review.md for the publish job.
       - name: Retain review text only
-        uses: &upload_artifact_action actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: &upload_artifact_action actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: opencode-review
           path: ${{ runner.temp }}/opencode-review/model-output/review.md
@@ -255,7 +255,7 @@ jobs:
     steps:
       # Transfer final text without checking out source or receiving the inference key.
       - name: Download review text
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: opencode-review
           path: ${{ runner.temp }}/opencode-review/model-output
