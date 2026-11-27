@@ -1,2 +1,2 @@
 # Shared pin for caller generation, release helpers, and YAML validation.
-PyYAML==6.0.3
+PyYAML==6.0.4
